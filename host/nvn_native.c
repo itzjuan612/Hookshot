@@ -1488,6 +1488,30 @@ NV(nvnCommandBufferPushComputeConstants) {
     memcpy(p + 8, &u, sizeof u);
     memcpy(p + 8 + sizeof u, P(4), n);
 }
+/* (hookshot) nvnCommandBufferPushGraphicsConstants(cmdbuf, NVNshaderStage stage, size_t offset, size_t size,
+   const void* data): graphics push constants, which NVN2 programs read from their driver bank c0. Raiders pushes a
+   0x6c-byte screen block (width, height, their reciprocals, the viewport's centre and edges, the scissor's) to the
+   vertex stage in main (0x8086e104). Copied at record time, as the compute ones; the replay keeps them a stage
+   (vk_bank.cpp serves them from c0, from RX_VK_GFX_PUSH_AT's offset, 0). */
+NV(nvnCommandBufferPushGraphicsConstants) {
+    const uint32_t stage = U32(1), n = U32(3);
+    const uint64_t off = U64(2);
+    {
+        static volatile LONG calls;
+        const LONG k = InterlockedIncrement(&calls);
+        if (k <= 8)
+            hos_log("nvn: CommandBufferPushGraphicsConstants #%ld: stage %u offset %#llx size %u (lr %#llx)", (long)k, stage,
+                    (unsigned long long)off, n, (unsigned long long)c->x[30]);
+    }
+    if (!P(4) || !n || n > 0x400 || off > 0x400 || stage >= 8) return;
+    nvn_cmd *o = CB(P(0));
+    const uint32_t sz = (uint32_t)(8 + sizeof(nvn_p_push_gfx) + n);
+    uint8_t *p = cmd_alloc(o, sz);
+    put_hdr(p, NOP_PUSH_GFX_CONST, (sz + 7) & ~7u);
+    nvn_p_push_gfx u = {stage, (uint32_t)off, n};
+    memcpy(p + 8, &u, sizeof u);
+    memcpy(p + 8 + sizeof u, P(4), n);
+}
 /* (hookshot) nvnQueueWaitSync(queue, sync): the queue's later work waits on the GPU for the sync's fence. Every
    NVN queue replays in one stream in submit order, so a fence submitted before this already came first; a sync not
    fenced yet (a wait on a fence another queue submits later) cannot be honored that way and is logged. */
@@ -2633,6 +2657,7 @@ static const nvn_impl impls[] = {
     {"nvnCommandBufferWaitSync", n_nvnCommandBufferWaitSync},
     {"nvnQueueWaitSync", n_nvnQueueWaitSync},
     {"nvnCommandBufferPushComputeConstants", n_nvnCommandBufferPushComputeConstants},
+    {"nvnCommandBufferPushGraphicsConstants", n_nvnCommandBufferPushGraphicsConstants},
     {"nvnCommandBufferResetCounter", n_nvnCommandBufferResetCounter},
     {"nvnCommandBufferReportCounter", n_nvnCommandBufferReportCounter},
     {"nvnCommandBufferCopyBufferToBuffer", n_nvnCommandBufferCopyBufferToBuffer},

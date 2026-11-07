@@ -739,6 +739,16 @@ void replay(VkCommandBuffer& cmd, NvnState& s, const uint8_t* p, const uint8_t* 
             }
             break;
         }
+        case NOP_PUSH_GFX_CONST: {   // (hookshot) graphics push constants: the stage's c0 (vk_bank.cpp serves them)
+            const auto u = payload<nvn_p_push_gfx>(a, avail);
+            if (u.size && u.stage < kNvnStages && u.size <= avail - sizeof u &&
+                (uint64_t)u.offset + u.size <= sizeof s.gfx_push[0]) {
+                std::memcpy(s.gfx_push[u.stage] + u.offset, a + sizeof u, u.size);
+                s.gfx_push_n[u.stage] = std::max<uint32_t>(s.gfx_push_n[u.stage], u.offset + u.size);
+                s.bind_gen++;
+            }
+            break;
+        }
         case NOP_BARRIER:
             if (dry) break;
             end_pass(cmd);

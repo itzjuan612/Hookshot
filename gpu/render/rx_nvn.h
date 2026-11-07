@@ -153,6 +153,7 @@ enum {
     NOP_WAIT_EVENT,                             /* (mkw-recomp: a wait for an event another queue's work signals) */
     NOP_PUSH_CONST,                             /* (hookshot: nvnCommandBufferPushComputeConstants) */
     NOP_CLEAR_BUF,                              /* (hookshot: nvnCommandBufferClearBuffer) */
+    NOP_PUSH_GFX_CONST,                         /* (hookshot: nvnCommandBufferPushGraphicsConstants) */
     NOP_COUNT_
 };
 typedef struct { int32_t n; const nvn_tex *color[8]; nvn_view cview[8]; uint8_t has_cview[8]; const nvn_tex *depth; nvn_view dview; uint8_t has_dview; } nvn_p_set_rt;
@@ -192,6 +193,8 @@ typedef struct { uint64_t src, dst, size; } nvn_p_copy_bb;
 typedef struct { uint64_t dst, size; /* data follows */ } nvn_p_update_ub;
 /* (hookshot) compute push constants: the bytes at offset in the compute driver bank's push area */
 typedef struct { uint32_t offset, size; /* data follows */ } nvn_p_push_const;
+/* (hookshot) graphics push constants: the bytes at offset in the stage's driver bank c0 */
+typedef struct { uint32_t stage, offset, size; /* data follows */ } nvn_p_push_gfx;
 /* (hookshot) a buffer range filled with a 32-bit value */
 typedef struct { uint64_t dst, size; uint32_t value, pad; } nvn_p_clear_buf;
 typedef struct { int32_t enable, index; } nvn_p_restart;

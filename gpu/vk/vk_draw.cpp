@@ -2829,6 +2829,29 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     if (exposure_log_on() && cp) exposure_note(s, *cp);
     if (cp->failed) SKIP_HERE();
     Program& p = const_cast<Program&>(*cp);
+    {   // (hookshot, RX_VK_LOG_C0=1) the programs that read their driver bank c0 at all, once each, and how far: the
+        // pushed graphics constants (0x00 to 0x110) reach only those that read it there
+        static const bool on = getenv("RX_VK_LOG_C0") != nullptr;
+        static std::mutex mu;
+        static std::unordered_set<uint64_t> seen;
+        if (on) {
+            std::lock_guard lk(mu);
+            if (seen.size() < 4096 && seen.find(p.key) == seen.end()) {
+                char line[512];
+                int n = snprintf(line, sizeof line, "vk: c0 reads of program %016llx:", (unsigned long long)p.key);
+                bool any = false;
+                for (const Stage& st : p.stages) {
+                    const uint32_t used = st.info.constant_buffer_used_sizes[0];
+                    n += snprintf(line + n, sizeof line - n, " s%d %#x", st.nvn_stage, used);
+                    any |= used != 0;
+                }
+                if (any) {
+                    seen.insert(p.key);
+                    logf("%s", line);
+                }
+            }
+        }
+    }
     PipeEntry* pe;
     {
         PROF(PROF_PIPE);

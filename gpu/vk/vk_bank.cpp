@@ -84,6 +84,14 @@ CsLayout cs_layout(const NvnState& s) {
     return l;
 }
 
+// (hookshot) Where NVN2 puts pushed graphics constants in a stage's driver bank c0: from this offset, 0 by default
+// (the bank's first 0x110 bytes are the only unfilled ones before the vertex storage buffer table). RX_VK_GFX_PUSH_AT:
+// a test (0x10, if the shaders turn out to read them where NVN2 compute keeps its push area).
+uint32_t gfx_push_base() {
+    static const uint32_t at = getenv("RX_VK_GFX_PUSH_AT") ? (uint32_t)strtoul(getenv("RX_VK_GFX_PUSH_AT"), nullptr, 0) : 0;
+    return at;
+}
+
 } // namespace
 
 const void* descriptor_ok(const void* p, size_t n) {
@@ -275,6 +283,14 @@ void driver_bank_fill(const NvnState& s, int bank, int stage, uint8_t* d, uint32
         for (uint32_t i = 0; i < l.img && l.img_at() + 8 * i < n; i++) put(l.img_at() + 8 * i, (uint32_t)s.img[5][std::min(i, 31u)]);
         return;
     }
+    {   // (hookshot) the pushed graphics constants (the tables below win should they ever overlap)
+        const uint32_t at = gfx_push_base();
+        for (uint32_t o = 0; o + 4 <= s.gfx_push_n[stage] && at + o + 4 <= n; o += 4) {
+            uint32_t v = 0;
+            std::memcpy(&v, s.gfx_push[stage] + o, 4);
+            put(at + o, v);
+        }
+    }
     static constexpr uint32_t kSsboTable[kNvnStages] = {0x110, 0x510, 0x410, 0x210, 0x310, 0, 0x670, 0x770};
     if (const uint32_t base = kSsboTable[stage])
         for (uint32_t i = 0; i < 16 && base + 16 * i < n; i++) entry(base + 16 * i, s.ssbo[stage][i]);
@@ -346,6 +362,14 @@ uint32_t driver_bank_word(const NvnState& s, int bank, int stage, uint32_t offse
         const PointerEntry& e = pointer_table(s, stage)[(offset - kPointerTable) / 16];
         const uint32_t in = (offset - kPointerTable) % 16;
         return in == 0 ? lo(e.addr) : in == 4 ? hi(e.addr) : in == 8 ? (uint32_t)e.size : 0;
+    }
+    {   // (hookshot) the pushed graphics constants
+        const uint32_t at = gfx_push_base();
+        if (offset >= at && offset - at + 4 <= s.gfx_push_n[stage]) {
+            uint32_t v = 0;
+            std::memcpy(&v, s.gfx_push[stage] + (offset - at), 4);
+            return v;
+        }
     }
     if (stage == 0 && offset == 0x610) return std::bit_cast<uint32_t>(2047.9375f);
     return 0;
