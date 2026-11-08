@@ -2728,6 +2728,20 @@ void texture_released(const nvn_tex* t) {
 uint64_t texture_made() {
     return st_made;
 }
+// (hookshot) The frame's SDR copy of its HDR scene: the newest A2B10G10R10 target of a size, GPU-written. Raiders'
+// upscale network reads B10G11R11 and writes A2B10G10R10 (it tonemaps); the pass before it (306668c9c9ce6460) has
+// already made the tonemapped copy, and the network's translation loses it. Found by its size, not remembered: the
+// network's dispatch does not always come after that pass in a queue's replay.
+Texture* texture_last_sdr_target(uint32_t width, uint32_t height) {
+    Texture* best = nullptr;
+    for (const auto& [key, up] : textures) {
+        Texture* t = up.get();
+        if (t->format != VK_FORMAT_A2B10G10R10_UNORM_PACK32 || t->width != width || t->height != height) continue;
+        if (!t->gpu_written || !t->image || t->depth > 1) continue;
+        if (!best || t->last_written > best->last_written) best = t;
+    }
+    return best;
+}
 void texture_unswizzle_stats(int64_t* bytes, int64_t* ns) {
     *bytes = st_unswizzle_bytes, *ns = st_unswizzle_ns;
 }

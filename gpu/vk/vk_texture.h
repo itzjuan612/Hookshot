@@ -145,6 +145,8 @@ uint64_t texture_frame_no();
 VkBufferView texel_buffer_view(const nvn_tex* t, const nvn_view* v, bool storage);
 /// The texture whose image was rendered for the window (present): t's own, or one rendered at its storage
 Texture* texture_for_present(const nvn_tex* t);
+/// (hookshot) the newest A2B10G10R10 target of a size (a frame's SDR copy of its HDR scene), for a network's stand-in
+Texture* texture_last_sdr_target(uint32_t width, uint32_t height);
 /// Ages the cache by one present; images nothing used for a while go, after the work that last read them
 void texture_frame(uint64_t completed_value);
 void texture_released(const nvn_tex* t);

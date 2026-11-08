@@ -3292,6 +3292,10 @@ bool upscale_stub(VkCommandBuffer cmd, const NvnState& s, uint64_t key) {
     if (!src || !dst || !src->image || !dst->image || (src->aspect | dst->aspect) != VK_IMAGE_ASPECT_COLOR_BIT || src->bc ||
         dst->bc || src->samples != VK_SAMPLE_COUNT_1_BIT || dst->samples != VK_SAMPLE_COUNT_1_BIT)
         return false;
+    if (src->format != dst->format)   // (hookshot) an HDR scene (the network that would tonemap it): the SDR copy the
+        if (Texture* sdr = texture_last_sdr_target(src->width, src->height))   // frame made of it, same size, instead
+            if (sdr->image && (sdr->aspect & VK_IMAGE_ASPECT_COLOR_BIT) && sdr->samples == VK_SAMPLE_COUNT_1_BIT && !sdr->bc)
+                src = sdr;
     VkFormatProperties fs{}, fd{};
     vkGetPhysicalDeviceFormatProperties(dev.physical, src->format, &fs);
     vkGetPhysicalDeviceFormatProperties(dev.physical, dst->format, &fd);
@@ -3693,6 +3697,25 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
         if (seen.size() < 64 && seen.insert(cp->key).second)
             logf("vk: dispatches of program %016llx are left out (it did not translate): grid %ux%ux%u%s",
                  (unsigned long long)cp->key, s.grid[0], s.grid[1], s.grid[2], indirect ? " (indirect)" : "");
+    }
+    {   // (hookshot) RX_VK_NETWORK_DROP=<program key prefix,...> (default: Raiders' upscaler 20ce8fa19e5349c2; "-":
+        // none): those networks' dispatches done as a linear upscale of their input instead, as a program that does
+        // not translate is (upscale_stub above). A network's translation can lose channels - OoT's TAAU fd029a317a9a4b94
+        // dropped the blue (the yellow cast over every scene) and Raiders' upscaler keeps only the red: its dispatch
+        // turned the bright scene into a dark red wash, the whole picture that wash and the HUD over it.
+        static const char* drop = getenv("RX_VK_NETWORK_DROP") ? getenv("RX_VK_NETWORK_DROP") : "20ce8fa19e5349c2";
+        char hex[24];
+        snprintf(hex, sizeof hex, "%016llx", (unsigned long long)(cp ? cp->key : 0));
+        bool dropped = false;
+        for (const char* q = drop; *q && !dropped;) {
+            const char* e = q;
+            while (*e && *e != ',') e++;
+            dropped = e > q && !strncmp(hex, q, (size_t)(e - q));
+            q = *e ? e + 1 : e;
+        }
+        if (cp && dropped && !cp->stages.empty() && cp->stages[0].info.uses_cooperative_matrix &&
+            upscale_stub(cmd, s, cp->key))
+            return void(st_dispatches++);
     }
     if ((!cp || cp->failed) && upscale_stub(cmd, s, compute_code_key(s))) return void(st_dispatches++);
     if (!cp || !cp->ready.load(std::memory_order_acquire) || cp->failed) SKIP_HERE();
