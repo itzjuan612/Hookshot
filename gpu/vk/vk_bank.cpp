@@ -310,6 +310,18 @@ void cs_slot_counts(const NvnState& s, uint32_t* tex, uint32_t* img) {
     *tex = l.tex, *img = l.img;
 }
 
+/// (hookshot) NVN2's pushed graphics constants live in the highest user cbuf (17: PushGraphicsConstants goes there,
+/// not into c0) unless the stage binds a buffer in that slot: Raiders' fullscreen passes read their rectangle from it
+/// (c17[8] width, c17[0xc] height, c17[0x50] x, c17[0x54] y, c17[0x58] two ints) and never bind ubo 14. Served 0
+/// reads with no push, which is what made them sample one texel and draw a flat colour.
+uint32_t gfx_push_word(const NvnState& s, int stage, uint32_t offset) {
+    if (stage < 0 || stage >= kNvnStages || offset + 4 > s.gfx_push_n[stage]) return 0;
+    if (s.ubo[stage][14].addr) return 0;
+    uint32_t v = 0;
+    std::memcpy(&v, s.gfx_push[stage] + offset, 4);
+    return v;
+}
+
 uint32_t driver_bank_word(const NvnState& s, int bank, int stage, uint32_t offset) {
     if (stage < 0 || stage >= kNvnStages || offset + 4 > 0xA00 || (offset & 3)) return 0;
     auto lo = [](uint64_t v) { return (uint32_t)v; };

@@ -318,6 +318,7 @@ public:
             return v;
         }
         if (index == 0 || index == 2) return driver_bank_word(s, (int)index, nvn.stage, offset);
+        if (index == 17) return gfx_push_word(s, nvn.stage, offset);   // (hookshot: NVN2's pushed graphics constants)
         if (index >= 3 && index < 3 + 16) {
             const nvn_p_bind_buf& u = s.ubo[nvn.stage][index - 3];
             uint32_t v = 0;
@@ -478,6 +479,7 @@ uint32_t stage_cbuf_word(const NvnState& s, const Stage& st, uint32_t index, uin
         return v;
     }
     if (index == 0 || index == 2) return driver_bank_word(s, (int)index, st.nvn_stage, offset);
+    if (index == 17) return gfx_push_word(s, st.nvn_stage, offset);   // (hookshot: NVN2's pushed graphics constants)
     if (index >= 3 && index < 3 + 16 && st.nvn_stage >= 0 && st.nvn_stage < kNvnStages) {
         const nvn_p_bind_buf& u = s.ubo[st.nvn_stage][index - 3];
         uint32_t v = 0;

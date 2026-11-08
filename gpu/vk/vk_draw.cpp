@@ -1105,6 +1105,17 @@ VkDescriptorBufferInfo uniform_range(const NvnState& s, const Stage& st, uint32_
         cur->c1_at[key] = at;
         return {cur->stream, at, n};
     }
+    if (index == 17) {   // (hookshot) NVN2's pushed graphics constants, where the stage binds no buffer: raised from 108 bytes
+        const int sg = std::clamp(st.nvn_stage, 0, kNvnStages - 1);
+        if (!s.ubo[sg][14].addr && s.gfx_push_n[sg]) {
+            const uint32_t n = std::clamp<uint32_t>((std::max<uint32_t>(used, s.gfx_push_n[sg]) + 15) & ~15u, 16, 0x400);
+            const uint64_t at = stream_alloc(n, align);
+            if (at == UINT64_MAX) return bi;
+            std::memset(cur->mapped + at, 0, n);
+            std::memcpy(cur->mapped + at, s.gfx_push[sg], std::min<uint32_t>(s.gfx_push_n[sg], n));
+            return {cur->stream, at, n};
+        }
+    }
     if (index >= 3 && index < 3 + 16) {
         const nvn_p_bind_buf& u = s.ubo[std::clamp(st.nvn_stage, 0, kNvnStages - 1)][index - 3];
         if (!u.addr) return bi;
@@ -2634,7 +2645,7 @@ void log_dump_draw(const NvnState& s, const Program& p, const DrawArgs& d) {
             } else n += snprintf(line + n, sizeof line - n, " %u", ix);
         }
     }
-    for (int i : {12, 11}) {   // (the vertex stage's c15 and c14 first: MKW's terrain patches' placement and camera)
+    for (int i : {12, 11, 14, 13}) {   // (the vertex stage's c15 and c14 first: MKW's terrain patches' placement and camera; c17 too: a fullscreen pass's rectangle)
         const nvn_p_bind_buf& u = s.ubo[0][i];
         if (!u.addr) continue;
         float f[16] = {};

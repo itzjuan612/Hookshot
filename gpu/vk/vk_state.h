@@ -66,6 +66,8 @@ uint32_t texture_slot_version(int id);
 
 /// One word of a driver constant bank (c0 / c2) as the NVN driver lays it out for the bound state
 uint32_t driver_bank_word(const NvnState& s, int bank, int stage, uint32_t offset);
+/// (hookshot) one word of the stage's pushed graphics constants, which NVN2 puts in cbuf 17
+uint32_t gfx_push_word(const NvnState& s, int stage, uint32_t offset);
 /// The first n bytes of a driver bank (what driver_bank_word gives, in one pass)
 void driver_bank_fill(const NvnState& s, int bank, int stage, uint8_t* d, uint32_t n);
 /// A driver bank whole (0xA00 bytes)
