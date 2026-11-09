@@ -1264,6 +1264,8 @@ static void set_split_volume(Ctx *c) {
                        .i2 = dst, .f = farg(c, 0)};
         submit(&k);
     }
+    AUT("audio: splitter %d destination %d volume %.3f (src %d dst %d)", get_handle(ARG(0), K_SPLITTER), d, farg(c, 0), src,
+        dst);
     au_unlock();
 }
 HLE(_ZN2nn5audio20SetSplitterMixVolumeEPNS0_12SplitterTypeEiPNS0_10SubMixTypeEfii) { set_split_volume(c); }
@@ -1548,6 +1550,13 @@ static void ret_float(Ctx *c, float f) {
     memset(&c->vreg[0], 0, sizeof c->vreg[0]);
     memcpy(&c->vreg[0][0], &bits, 4);
 }
+/* (the output device's own volume and the renderer's voice drop were unimplemented: the a64 stub answered 0.0, the
+   game scaled its voices by it, and environment voices that start at 0 stayed silent. The console reads them as 1.0
+   unless the system lowered them.) */
+HLE(_ZN2nn5audio26GetAudioDeviceOutputVolumeEPKNS0_15AudioDeviceNameE) { ret_float(c, 1.0f); }
+HLE(_ZN2nn5audio34GetAudioRendererVoiceDropParameterENS0_19AudioRendererHandleE) { ret_float(c, 1.0f); }
+HLE(_ZN2nn5audio39IsDeviceOutputVolumeAutoTuneModeEnabledEv) { RET(0); }
+HLE(_ZN2nn5audio40SetDeviceOutputVolumeAutoTuneModeEnabledEb) {}
 #define REVERB_FLOAT(NAME, field) \
     HLE(_ZN2nn5audio##NAME##EPNS0_15I3dl2ReverbTypeEf) { Reverb *rv = reverb_of(ARG(0)); if (rv) rv->field = farg(c, 0); }
 #define REVERB_FLOAT_GET(NAME, field) \

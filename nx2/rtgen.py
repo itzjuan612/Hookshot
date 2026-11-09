@@ -53,8 +53,23 @@ MARK_NATIVE_64 = r"""extern uint8_t a64_dirty[A64_DIRTY_PAGES];
 #define A64_MARK(a, n) (__atomic_store_n(&a64_dirty[A64_DIRTY_AT(a)], 1, __ATOMIC_RELEASE), \
                         __atomic_store_n(&a64_dirty[A64_DIRTY_AT((a) + (n) - 1)], 1, __ATOMIC_RELEASE))"""
 
+LOADS_OLD = (
+    "A64_INLINE uint64_t recomp_load8(GuestContext *c, uint64_t a) { (void)c; return *(const uint8_t *)A64_PTR(a); }\n"
+    "A64_INLINE uint64_t recomp_load16(GuestContext *c, uint64_t a) { uint16_t v; (void)c; memcpy(&v, A64_PTR(a), 2); return v; }\n"
+    "A64_INLINE uint64_t recomp_load32(GuestContext *c, uint64_t a) { uint32_t v; (void)c; memcpy(&v, A64_PTR(a), 4); return v; }\n"
+    "A64_INLINE uint64_t recomp_load64(GuestContext *c, uint64_t a) { uint64_t v; (void)c; memcpy(&v, A64_PTR(a), 8); return v; }")
+LOADS_NEW = r"""/* (nx2/rtgen.py) RX_READ_WATCH=1: log the first guest CPU read of each page in the big-map band, to find the ink-map read */
+extern int a64_read_watch_on;
+void a64_read_watch(uint64_t a, uint64_t v, unsigned n);
+#define A64_RW(a, v, n) do { if (a64_read_watch_on) a64_read_watch((a), (v), (n)); } while (0)
+A64_INLINE uint64_t recomp_load8(GuestContext *c, uint64_t a) { (void)c; uint8_t v = *(const uint8_t *)A64_PTR(a); A64_RW(a, v, 1); return v; }
+A64_INLINE uint64_t recomp_load16(GuestContext *c, uint64_t a) { uint16_t v; (void)c; memcpy(&v, A64_PTR(a), 2); A64_RW(a, v, 2); return v; }
+A64_INLINE uint64_t recomp_load32(GuestContext *c, uint64_t a) { uint32_t v; (void)c; memcpy(&v, A64_PTR(a), 4); A64_RW(a, v, 4); return v; }
+A64_INLINE uint64_t recomp_load64(GuestContext *c, uint64_t a) { uint64_t v; (void)c; memcpy(&v, A64_PTR(a), 8); A64_RW(a, v, 8); return v; }"""
+
 SUBST = {
     "a64.h": [
+        (LOADS_OLD, LOADS_NEW),
         (THREAD, THREAD.replace("\n} GuestContext;", "\n    uint32_t poll;              "
                                 "/* (nx2/rtgen.py) interrupt request: A64_POLL calls a64_poll when set */\n} GuestContext;")),
         (RET_MISMATCH, RET_MISMATCH + POLL_DECL),

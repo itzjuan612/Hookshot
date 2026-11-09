@@ -32,6 +32,7 @@ static uint64_t region_floor = ~0ULL;   /* the lowest region (none yet: the wind
 static uint64_t low_hole[2][2];
 
 void hos_mem_init(uint64_t image_end) {
+    a64_read_watch_on = getenv("RX_READ_WATCH") != NULL;
     hos_program_size = image_end - hos_image_base;
     hos_commit(HOS_SYSTEM_BASE, HOS_SYSTEM_END - HOS_SYSTEM_BASE);
     low_hole[0][0] = 0x00100000ULL, low_hole[0][1] = HOS_SYSTEM_BASE;
@@ -178,6 +179,18 @@ void hos_mark_written(const void *p, size_t n) {
         __atomic_store_n(&a64_dirty[q], 1, __ATOMIC_RELEASE);
 }
 #endif
+
+/* (RX_READ_WATCH=1) the first guest CPU read of each page in the big-map band: which coverage map the gameplay reads.
+   The band holds the 6400x6400 stage maps (0x7ecc.../0x7edf...); one log line per page, address + value + caller. */
+int a64_read_watch_on;
+static uint8_t rw_logged[0x200000];   /* (0x8000000000 - 0x7e00000000) / 4096 pages */
+void a64_read_watch(uint64_t a, uint64_t v, unsigned n) {
+    if (a < 0x7e00000000ull || a >= 0x8000000000ull) return;
+    const uint64_t page = (a - 0x7e00000000ull) >> 12;
+    if (__atomic_exchange_n(&rw_logged[page], 1, __ATOMIC_RELAXED)) return;
+    hos_log("READ_WATCH a=%#llx v=%#llx n=%u ra=%p", (unsigned long long)a, (unsigned long long)v, n,
+            __builtin_return_address(0));
+}
 
 /* nn::os::SetMemoryHeapSize(unsigned long) -> Result */
 HLE(_ZN2nn2os17SetMemoryHeapSizeEm) {

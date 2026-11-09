@@ -3560,6 +3560,10 @@ void clear_color_target(VkCommandBuffer cmd, NvnState& s, int index, const float
     const VkRect2D rect = clear_rect(s, lw, lh);
     if (!rect.extent.width || !rect.extent.height) return;
     st_clears++, pass().clears++;
+    const bool whole = !rect.offset.x && !rect.offset.y && rect.extent.width == lw && rect.extent.height == lh &&
+                       !at.color_level[index] && !at.color_layer[index];
+    uint32_t cv[4];
+    std::memcpy(cv, rgba, 16);
     if (mask == 0xF) {
         VkClearAttachment ca{};
         ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -3568,6 +3572,7 @@ void clear_color_target(VkCommandBuffer cmd, NvnState& s, int index, const float
         const VkClearRect cr{rect, 0, 1};
         vkCmdClearAttachments(cmd, 1, &ca, 1, &cr);
         pass().written |= (uint16_t)(1u << index);
+        texture_note_clear(at.color[index], whole, cv);
         return;
     }
     pass().written |= (uint16_t)(1u << index);
@@ -3585,6 +3590,7 @@ void clear_color_target(VkCommandBuffer cmd, NvnState& s, int index, const float
     vkCmdSetScissor(cmd, 0, 1, &rect);
     vkCmdPushConstants(cmd, clear_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16, rgba);
     vkCmdDraw(cmd, 3, 1, 0, 0);
+    texture_note_clear(at.color[index], whole, cv);
 }
 
 void clear_depth_stencil(VkCommandBuffer cmd, NvnState& s, float depth, bool depth_mask, uint32_t stencil,
@@ -4050,7 +4056,7 @@ void log_dump_draw(const NvnState& s, const Program& p, const DrawArgs& d) {
         n += snprintf(line + n, sizeof line - n, " sb%d %#llx+%#llx [%x %x %x %x %x %x %x %x]", i, (unsigned long long)b.addr,
                       (unsigned long long)b.size, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
     }
-    for (int i = 0; i < 16 && n < 1500; i++) {   // (the vertex stage's uniform buffers: their first 16 words)
+    for (int i = 0; i < 16 && n < 3900; i++) {   // (the vertex stage's uniform buffers: their first 16 words)
         const nvn_p_bind_buf& u = s.ubo[0][i];
         if (!u.addr) continue;
         float f[16] = {};
@@ -4059,7 +4065,7 @@ void log_dump_draw(const NvnState& s, const Program& p, const DrawArgs& d) {
         if (!upd) host->gpu_read(u.addr, f, sizeof f);
         n += snprintf(line + n, sizeof line - n, " c%d%s %#llx+%#llx [", i + 3, upd ? "*" : "", (unsigned long long)u.addr,
                       (unsigned long long)u.size);
-        for (int k = 0; k < 16 && n < 1900; k++) n += snprintf(line + n, sizeof line - n, k ? " %.5g" : "%.5g", f[k]);
+        for (int k = 0; k < 16 && n < 3900; k++) n += snprintf(line + n, sizeof line - n, k ? " %.5g" : "%.5g", f[k]);
         n += snprintf(line + n, sizeof line - n, "]");
     }
     logf("%s", line);
@@ -5909,9 +5915,10 @@ bool upscale_stub(VkCommandBuffer cmd, const NvnState& s, uint64_t key) {
     static std::unordered_set<uint64_t> seen;
     std::lock_guard lk(mu);
     if (seen.size() < 32 && seen.insert(key).second)
-        logf("vk: program %016llx does not translate: its dispatch replaced by a linear upscale of %#llx %ux%u (vk %d) "
+        logf("vk: program %016llx does not translate: its dispatch replaced by a linear upscale of %#llx %ux%u (src #%u %#llx, vk %d) "
              "into %#llx %ux%u (vk %d)", (unsigned long long)key, (unsigned long long)in.gpu, in.d.width, in.d.height,
-             (int)src->format, (unsigned long long)out.gpu, out.d.width, out.d.height, (int)dst->format);
+             src->id, (unsigned long long)src->gpu, (int)src->format, (unsigned long long)out.gpu, out.d.width, out.d.height,
+             (int)dst->format);
     (void)in_h, (void)out_h;
     return true;
 }

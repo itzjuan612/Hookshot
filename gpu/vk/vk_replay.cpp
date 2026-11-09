@@ -3229,6 +3229,21 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
         if (!qk.owns_lock()) qk.lock();
         create_swapchain(dev.swap_extent.width, dev.swap_extent.height);
     }
+    if (qk.owns_lock()) qk.unlock();   // (the flush below takes the replay's lock, not the queue's)
+    {   // (hookshot) the CPU-readable render targets the GPU wrote this frame (the ink/coverage maps) back into guest
+        // memory, where the game reads them. After the present, so the frame's work is done; same order as NVN's
+        // InvalidateMappedRange (wait, then the replay's lock). RX_VK_NO_LINEAR_FLUSH=1: off. The big block-linear maps'
+        // load-time baseline is written back once each, after init settles (RX_VK_NO_CLEAR_FLUSH=1: off).
+        static const bool linear_flush = getenv("RX_VK_NO_LINEAR_FLUSH") == nullptr;
+        static const bool clear_flush = getenv("RX_VK_NO_CLEAR_FLUSH") == nullptr;
+        if (linear_flush || clear_flush) {
+            wait_queue_empty();
+            std::lock_guard lk(replay_mu);
+            texture_flush_cpu_targets();
+            texture_flush_pending_clears();
+            texture_sample_big_maps();
+        }
+    }
 }
 
 

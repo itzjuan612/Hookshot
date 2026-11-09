@@ -362,6 +362,7 @@ void clear_tex(VkCommandBuffer cmd, NvnState& st, const nvn_p_clear_tex& p) {
     const bool fresh = !s.tex->gpu_written || s.tex->released || s.tex->only_cleared;
     texture_written(s.tex);
     s.tex->only_cleared = fresh && s.tex->aspect == VK_IMAGE_ASPECT_COLOR_BIT;
+    texture_note_clear(s.tex, whole && !s.level && !s.layer && s.layers >= s.tex->layers, p.c.u);
 }
 
 } // namespace mkwvk

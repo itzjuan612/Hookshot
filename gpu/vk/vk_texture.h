@@ -60,6 +60,8 @@ struct Texture {
     uint32_t runs_maps_gen = ~0u;             // (the GPU mappings' generation the runs were made at)
     bool gpu_written = false; // the GPU rendered, copied or stored into it: the image is the content
     bool only_cleared = false; // (hookshot) all the GPU did was clear it: what the CPU writes after still counts (a font cache's glyphs)
+    bool clear_flush_pending = false; // (hookshot) this big block-linear map's baseline (a whole clear, or its settled init once idle) awaits its one guest write-back
+    bool clear_flushed = false;       // (and it had it: the load-time "no ink" baseline is in guest memory)
     uint32_t gpu_gen = 0;     // (the memory generation when the GPU last wrote it: CPU writes after it are taken)
     bool released = false;    // its texture was finalized after the GPU wrote it: CPU writes count again
     uint32_t release_gen = 0;
@@ -164,6 +166,13 @@ Texture* texture_last_sdr_target(uint32_t width, uint32_t height);
 /// Ages the cache by one present; images nothing used for a while go, after the work that last read them
 void texture_frame(uint64_t completed_value);
 void texture_released(const nvn_tex* t);
+int texture_flush_cpu_targets();
+/// (hookshot) a big block-linear colour map the GPU cleared: note it (whole: the clear covered all of level 0), logging the value
+void texture_note_clear(Texture* t, bool whole, const uint32_t value[4]);
+/// (hookshot) the noted maps' baseline texels into guest memory, once each (the replay's lock held, the queue empty)
+int texture_flush_pending_clears();
+/// (RX_VK_MAP_PROBE=1: periodically log the big maps' GPU image vs guest memory, to find the one gameplay reads)
+void texture_sample_big_maps();
 /// (diagnostics: what guest memory holds of a texture's storage now, level by level, logged)
 void texture_log_guest(const Texture* t);
 /// (diagnostics, the replay's lock held) the textures the GPU wrote in [gpu, gpu + size), appended to out

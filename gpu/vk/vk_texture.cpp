@@ -1786,6 +1786,13 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
     }
     textures.emplace(key, std::move(tex));
     by_gpu.emplace(p->gpu, p);
+    if (p->d.flags & 0x40) {   // (hookshot: the CPU-readable render targets, the ink/coverage maps the game reads back)
+        static int lr;
+        if (lr++ < 60)
+            logf("vk: linear render target #%u %#llx %ux%u x%u NVN %#x %llu KB flags %#x", p->id,
+                 (unsigned long long)p->gpu, p->width, p->height, p->layers, p->nvn_format,
+                 (unsigned long long)(p->guest_size >> 10), p->d.flags);
+    }
     watch_tex(p, "made");
     if (remade_log_on()) {   // (one evicted not long ago, made again)
         std::lock_guard lk(evicted_mu);
@@ -2327,8 +2334,8 @@ namespace {
 constexpr uint64_t kFlushMax = 16ull << 20;   // (the small ones: render targets that size and more are not)
 std::mutex vw_mu;
 std::map<uint64_t, uint64_t> vw;   // (storage start -> end of the GPU-written textures of virtual pools that may be flushed)
-bool flushable(const Texture& t) {
-    if (!t.guest_size || t.guest_size > kFlushMax || t.astc || t.bc || t.sparse || t.skip ||
+bool flushable(const Texture& t, uint64_t cap = kFlushMax) {
+    if (!t.guest_size || t.guest_size > cap || t.astc || t.bc || t.sparse || t.skip ||
         t.samples != VK_SAMPLE_COUNT_1_BIT || t.aspect != VK_IMAGE_ASPECT_COLOR_BIT || t.bpb <= 0 || !t.image ||
         (nvn_tex_is_linear(&t.d) && (t.levels != 1 || t.type == VK_IMAGE_TYPE_3D)))   // (linear: one level, rows)
         return false;
@@ -2452,6 +2459,18 @@ bool flush_texture(Texture& t, uint64_t clip_lo, uint64_t clip_hi) {
             const uint32_t* u = (const uint32_t*)map;
             logf("vk: tiny write-back #%u %#llx NVN %#x: %g %g %g %g (%08x %08x %08x %08x)", t.id, (unsigned long long)t.gpu,
                  t.nvn_format, f[0], f[1], f[2], f[3], u[0], u[1], u[2], u[3]);
+        }
+    }
+    if (ok && t.guest_size > kFlushMax) {   // (the load-time baseline of a big map: a real value, or the zero the guest memory had?)
+        static int logged;
+        if (logged++ < 12) {
+            const uint32_t* u = (const uint32_t*)map;
+            const float* f = (const float*)map;
+            uint64_t nz = 0, samples = 0;
+            for (uint64_t i = 0; i < total; i += 4096, samples++) if (((const uint8_t*)map)[i]) nz++;
+            logf("vk: map baseline texels #%u %#llx NVN %#x: %08x %08x %08x %08x (%g %g %g %g), nonzero %llu/%llu samples",
+                 t.id, (unsigned long long)t.gpu, t.nvn_format, u[0], u[1], u[2], u[3], f[0], f[1], f[2], f[3],
+                 (unsigned long long)nz, (unsigned long long)samples);
         }
     }
     // (hookshot) pages the CPU wrote after the GPU last wrote the texture keep the CPU's bytes: on the console the GPU's
@@ -2588,6 +2607,118 @@ int texture_flush_to_guest(uint64_t lo, uint64_t size) {
     return done;
 }
 
+int texture_flush_cpu_targets() {
+    // (hookshot) CPU-readable render targets (NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET: the game reads them straight from
+    // guest memory, where on the console the GPU writes them: the ink and coverage maps). Without this write-back the
+    // CPU's copy held what the game last put there and the ink test read the cleared map (team 0, the enemy).
+    static const bool off = getenv("RX_VK_NO_LINEAR_FLUSH") != nullptr;
+    if (off) return 0;
+    std::vector<std::pair<uint64_t, uint64_t>> todo;
+    for (auto& kv : textures) {
+        Texture* t = kv.second.get();
+        if (t->gpu_written && (t->d.flags & 0x40 /* NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET */) && flushable(*t))
+            todo.push_back({t->gpu, t->guest_size});
+    }
+    int n = 0;
+    if (!todo.empty()) {
+        static int logged;
+        if (logged++ < 10) logf("vk: linear flush: %zu CPU-readable target(s) this present", todo.size());
+    }
+    for (const auto& [gpu, size] : todo) n += texture_flush_to_guest(gpu, size);
+    return n;
+}
+
+// (hookshot) the stage's big block-linear colour maps (the ink/coverage maps, 6400x6400, 156 MB): the game reads them from
+// guest memory, but the GPU's writes stay in the image. The per-present flush above takes only the small linear targets;
+// these are over its 16 MiB cap. Their load-time baseline — a whole clear, or the settled content of a map initialised by
+// draws/compute once it goes idle — is what the gameplay tests against, so it is written back once, whole (a load-time cost,
+// not per frame). The paint that follows wants a region-tracked write-back, not this.
+void texture_note_clear(Texture* t, bool whole, const uint32_t value[4]) {
+    if (!t || t->guest_size <= kFlushMax) return;
+    static int logged;
+    if (logged++ < 120) {
+        const float* f = (const float*)value;
+        logf("vk: map clear #%u %#llx %ux%u NVN %#x aspect %#x flags %#x %llu MB whole %d: %08x %08x %08x %08x (%g %g %g %g)", t->id,
+             (unsigned long long)t->gpu, t->width, t->height, t->nvn_format, (unsigned)t->aspect, (unsigned)t->d.flags,
+             (unsigned long long)(t->guest_size >> 20), whole, value[0], value[1], value[2], value[3], f[0], f[1], f[2], f[3]);
+    }
+    if (!nvn_tex_is_linear(&t->d) && t->aspect == VK_IMAGE_ASPECT_COLOR_BIT && whole && !t->clear_flushed && !t->clear_flush_pending &&
+        flushable(*t, UINT64_MAX))
+        t->clear_flush_pending = true;
+}
+
+int texture_flush_pending_clears() {
+    static const bool off = getenv("RX_VK_NO_CLEAR_FLUSH") != nullptr;
+    if (off) return 0;
+    int n = 0;
+    for (auto& kv : textures) {
+        Texture* t = kv.second.get();
+        // (the load-time baseline of a big block-linear colour map the CPU reads, written back once, whole. A whole clear
+        //  sets it at once (texture_note_clear); a map initialised by draws/compute is flushed only after its init settles —
+        //  its first write is still zero, the real "no ink" baseline lands later in the load, so wait until the map is idle.)
+        if (!t->clear_flush_pending && !t->clear_flushed && t->gpu_written && !nvn_tex_is_linear(&t->d) &&
+            t->aspect == VK_IMAGE_ASPECT_COLOR_BIT && t->guest_size > kFlushMax && frame_no - t->last_written >= 120 &&
+            flushable(*t, UINT64_MAX))
+            t->clear_flush_pending = true;
+        if (!t->clear_flush_pending) continue;
+        t->clear_flush_pending = false;
+        if (flush_texture(*t, t->gpu, t->gpu + t->guest_size)) {
+            t->gpu_written = false;
+            t->uploaded = true;
+            t->upload_gen = memory_generation();
+            t->clear_flushed = true;
+            watch_tex(t, "clear written back into its memory");
+            n++;
+            logf("vk: map baseline written back: #%u %#llx %ux%u NVN %#x (%llu MB)", t->id, (unsigned long long)t->gpu,
+                 t->width, t->height, t->nvn_format, (unsigned long long)(t->guest_size >> 20));
+        } else {
+            t->clear_flush_pending = true;   // (the readback failed: tried again next present)
+        }
+    }
+    return n;
+}
+
+void texture_sample_big_maps() {   // (RX_VK_MAP_PROBE=1: GPU image vs guest memory of the big maps, to find the one gameplay reads)
+    static const bool on = getenv("RX_VK_MAP_PROBE") != nullptr;
+    if (!on) return;
+    static int calls;
+    if (++calls % 600) return;
+    for (auto& kv : textures) {
+        Texture* t = kv.second.get();
+        if (nvn_tex_is_linear(&t->d) || t->aspect != VK_IMAGE_ASPECT_COLOR_BIT || t->guest_size <= kFlushMax ||
+            !t->image || t->samples != VK_SAMPLE_COUNT_1_BIT) continue;
+        uint8_t g[65536];
+        uint64_t gnz = 0;
+        const bool gok = host->gpu_read(t->gpu, g, sizeof g);
+        if (gok) for (uint64_t i = 0; i < sizeof g; i++) gnz += g[i] != 0;
+        const uint32_t* gu = (const uint32_t*)g;
+        const uint32_t W = 64, H = 64;
+        const uint64_t region = (uint64_t)W * H * t->bpb;
+        VkBuffer buf = VK_NULL_HANDLE; VmaAllocation alloc = nullptr; void* map = nullptr;
+        uint64_t nz = 0; uint32_t u0 = 0, u1 = 0, u2 = 0, u3 = 0; bool got = false;
+        if (create_buffer(region, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, buf, alloc, &map) && map) {
+            if (readback_begin()) {
+                full_barrier(rb_cmd);
+                VkBufferImageCopy c{};
+                c.bufferRowLength = W; c.bufferImageHeight = H;
+                c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                c.imageExtent = {W, H, 1};
+                vkCmdCopyImageToBuffer(rb_cmd, t->image, VK_IMAGE_LAYOUT_GENERAL, buf, 1, &c);
+                if (readback_submit_wait()) {
+                    const uint8_t* p = (const uint8_t*)map; const uint32_t* u = (const uint32_t*)p;
+                    u0 = u[0]; u1 = u[1]; u2 = u[2]; u3 = u[3]; got = true;
+                    for (uint64_t b = 0; b < region; b++) nz += p[b] != 0;
+                }
+            }
+            destroy_buffer(buf, alloc);
+        }
+        logf("vk: map probe call %d #%u %#llx NVN %#x %lluMB: GPU %08x %08x %08x %08x nz %llu/%llu%s; guest %08x %08x %08x %08x nz %llu/65536 (flushed %d)",
+             calls, t->id, (unsigned long long)t->gpu, t->nvn_format, (unsigned long long)(t->guest_size >> 20),
+             u0, u1, u2, u3, (unsigned long long)nz, (unsigned long long)region, got ? "" : " (readback failed)",
+             gok ? gu[0] : 0, gok ? gu[1] : 0, gok ? gu[2] : 0, gok ? gu[3] : 0, (unsigned long long)gnz, t->clear_flushed);
+    }
+}
+
 void texture_written(Texture* tex) {
     if (!tex) return;
     if (tex->upload_value == rec_value && tex->upload_seg > tl_seg) {   // (a parallel replay's order broken: see dry_mark_written)
@@ -2604,7 +2735,8 @@ void texture_written(Texture* tex) {
         if (logged++ < 20) logf("vk: sparse texture %#llx written by the GPU (#%u)", (unsigned long long)tex->gpu, tex->id);
     }
     watch_tex(tex, "written");
-    if (!tex->gpu_written || tex->released) tex->first_written = frame_no;
+    const bool first = !tex->gpu_written || tex->released;
+    if (first) tex->first_written = frame_no;
     tex->last_written = frame_no;
     tex->gpu_written = true;
     tex->gpu_gen = memory_generation();

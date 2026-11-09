@@ -256,7 +256,7 @@ static void log_flush(void) {}
 void hos_log_flush(void) { log_flush(); }
 
 void hos_log(const char *fmt, ...) {
-    char buf[1024], line[1100];
+    char buf[4096], line[4200];   // (a dump-draw line carries its uniforms past 1 KB)
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);

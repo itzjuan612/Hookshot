@@ -69,7 +69,7 @@ Device dev;
 PFN_vkGetInstanceProcAddr instance_proc() { return vkx::instance_proc_addr(); }
 
 void logf(const char* fmt, ...) {
-    char b[1024];
+    char b[4096];   // (a dump-draw line carries its uniforms past 1 KB: c10..c18)
     std::va_list a;
     va_start(a, fmt);
     std::vsnprintf(b, sizeof b, fmt, a);
