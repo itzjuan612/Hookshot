@@ -737,18 +737,6 @@ static void vibration_send(uint64_t handle, uint64_t value);
 volatile int64_t hos_hid_last_read;
 
 /* GetNpadStates(State* out, int count, unsigned int const& npadId): the latest state first */
-/* The game asks for 16 states (a ~16 ms history) and finds a press by comparing state[0] with the older ones;
-   fill that history one sample per read, so a scripted or pad press shows up as an edge. */
-static uint64_t npad_hist[32];
-static int npad_hist_n;
-
-static void npad_push(uint64_t buttons) {
-    const int n = npad_hist_n < 32 ? npad_hist_n + 1 : 32;
-    memmove(&npad_hist[1], &npad_hist[0], sizeof npad_hist[0] * (size_t)(n - 1));
-    npad_hist[0] = buttons;
-    npad_hist_n = n;
-}
-
 static void npad_states(Ctx *c) {
     uint64_t out = ARG(0);
     int count = (int)ARG(1);
@@ -798,7 +786,6 @@ static void npad_states(Ctx *c) {
         __atomic_store_n(&free_camera_axes, axes, __ATOMIC_RELAXED);
         __atomic_store_n(&free_camera_height, height, __ATOMIC_RELAXED);
         static int logged;
-        npad_push(buttons);
         if (buttons && !logged) {
             logged = 1;
             hos_log("hid: first input %#llx (count %d)", (unsigned long long)buttons, count);
@@ -813,7 +800,7 @@ static void npad_states(Ctx *c) {
         uint64_t e = out + (uint64_t)i * STATE_SIZE;
         memset(GP(e), 0, STATE_SIZE);
         G64(e) = (uint64_t)(s - i);
-        G64(e + 8) = connected ? (i < npad_hist_n ? npad_hist[i] : npad_hist[npad_hist_n - 1]) : 0;
+        G64(e + 8) = buttons;
         memcpy(GP(e + 16), stick, 16);
         G32(e + 32) = connected ? ATTR_CONNECTED : 0;
     }
